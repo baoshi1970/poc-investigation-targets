@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  受注データ 日次 ETL
+  作成: 2017-09 / 主要改修: 2020-01 (項目追加), 2024-03 (税率変更対応)
+  TICKET-ASTR-012: 全件洗い替えで件数増にスケールしない。直近 2 時間超。
+-->
+<flow xmlns="http://www.asteria.com/warp/flow"
+      id="FLW-002"
+      name="order_etl_daily"
+      version="5.7">
+
+    <variables>
+        <variable name="runId"     type="string" expr="formatDate(now(),'yyyyMMddHHmm')"/>
+        <variable name="targetDt"  type="date"   expr="addDays(today(),-1)"/>
+        <variable name="totalAmt"  type="decimal" value="0"/>
+    </variables>
+
+    <components>
+
+        <component id="O1" type="DBInput" name="受注ヘッダ全件取得">
+            <connection ref="CN_OMS_PRD"/>
+            <!--
+              当初は前日分のみ取得していたが、ステータス変更が当日以降にも入るため
+              「念のため全件」に変更 (2019-11)。以降データ量は増え続けている。
+            -->
+            <query><![CDATA[
+                SELECT ORDER_NO, ORDER_DT, CUSTOMER_CD, USER_ID,
+                       STATUS_CD, TOTAL_AMT, REMARKS, CRT_DT, UPD_DT
+                  FROM T_ORDER
+                 ORDER BY ORDER_DT
+            ]]></query>
+            <output>
+                <field name="orderNo"    type="string"  length="14"/>
+                <field name="orderDt"    type="date"/>
+                <field name="customerCd" type="string"  length="10"/>
+                <field name="userId"     type="string"  length="20"/>
+                <field name="statusCd"   type="string"  length="2"/>
+                <field name="totalAmt"   type="decimal" precision="12" scale="2"/>
+                <field name="remarks"    type="string"  length="400"/>
+                <field name="crtDt"      type="date"/>
+                <field name="updDt"      type="date"/>
+            </output>
+        </component>
+
+        <component id="O2" type="LookupDB" name="取引先名引き当て">
+            <connection ref="CN_OMS_PRD"/>
+            <input ref="O1"/>
+            <query><![CDATA[
+                SELECT CUSTOMER_NM FROM M_CUSTOMER WHERE CUSTOMER_CD = ?
+            ]]></query>
+            <bind src="customerCd"/>
+            <cache enabled="false"/>
+            <!--
+              ※ 1 受注ごとに 1 回 SQL を発行する設定 (cache=false)。
+                 当初は数千件だったので問題なかったが、現在は数十万件で実行されており
+                 ここが全体時間の半分以上を占めると思われる。
+            -->
+        </component>
+
+        <component id="O3" type="XSLT" name="XSLT で変換">
+            <input ref="O2"/>
+            <stylesheet src="../mappers/order_transform.xsl"/>
+            <!--
+              受注明細は別フローで連携する設計だが、税率計算だけはここで XSLT 経由で実施。
+              2019 年の軽減税率対応時に追加されたまま、2024 年税率変更後もテーブル直書き。
+            -->
+        </component>
+
+        <component id="O4" type="FileOutput" name="DWH 取込用 TSV 出力">
+            <connection ref="CN_STG_FILE"/>
+            <path>\\fileserver01\etl_stage\order\order_${vars.runId}.tsv</path>
+            <encoding>UTF-8</encoding>
+            <input ref="O3"/>
+            <!-- ファイル一意化キーが runId(分単位) のため、再実行で上書きされる -->
+        </component>
+
+        <component id="O5" type="DBExecute" name="DWH 受注テーブル切替">
+            <connection ref="CN_DWH"/>
+            <input ref="O4"/>
+            <statements>
+                <sql>TRUNCATE TABLE FACT_ORDER</sql>
+                <sql><![CDATA[
+                    BULK INSERT FACT_ORDER
+                    FROM '\\fileserver01\etl_stage\order\order_${vars.runId}.tsv'
+                    WITH (FIELDTERMINATOR='\t', ROWTERMINATOR='\n', CODEPAGE='65001')
+                ]]></sql>
+            </statements>
+            <!--
+              TRUNCATE → BULK INSERT。途中で BULK INSERT が失敗すると
+              FACT_ORDER が空のまま朝になる障害が 2022-08 と 2023-12 に発生。
+              ロールバック設計は無し。
+            -->
+        </component>
+
+        <component id="O6" type="MailSend" name="完了通知">
+            <to>${properties.notification.mail}</to>
+            <subject>[OK] order_etl_daily runId=${vars.runId}</subject>
+            <body>order_etl_daily が完了しました。</body>
+        </component>
+
+    </components>
+
+    <wire from="O1" to="O2"/>
+    <wire from="O2" to="O3"/>
+    <wire from="O3" to="O4"/>
+    <wire from="O4" to="O5"/>
+    <wire from="O5" to="O6"/>
+
+</flow>

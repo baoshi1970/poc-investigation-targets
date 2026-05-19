@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JDBC 接続定義
+  ※ TICKET-ASTR-031: パスワード平文を指摘されているが Warp 1709 の暗号化機能を
+     有効化するには Designer 再認証が必要で、未対応のまま据え置き。
+-->
+<connections xmlns="http://www.asteria.com/warp/jdbc">
+
+    <connection id="CN_OMS_PRD" name="OMS 本番 (Oracle)">
+        <driver>oracle.jdbc.driver.OracleDriver</driver>
+        <url>jdbc:oracle:thin:@10.20.30.40:1521:OMSPRD</url>
+        <user>etl_reader</user>
+        <password>EtlReader@2017</password>
+        <pool minSize="2" maxSize="10" timeoutSec="30"/>
+    </connection>
+
+    <connection id="CN_OMS_SUB" name="OMS サブ (MySQL)">
+        <driver>com.mysql.jdbc.Driver</driver>
+        <url>jdbc:mysql://10.20.30.41:3306/oms_sub?useUnicode=true&amp;characterEncoding=SJIS</url>
+        <user>etl_user</user>
+        <password>etl_user_2018</password>
+        <pool minSize="1" maxSize="4" timeoutSec="30"/>
+    </connection>
+
+    <connection id="CN_DWH" name="DWH (SQL Server)">
+        <driver>com.microsoft.sqlserver.jdbc.SQLServerDriver</driver>
+        <url>jdbc:sqlserver://dwh.example.local:1433;databaseName=DWH_PROD</url>
+        <user>dwh_loader</user>
+        <password>Dwh#Loader2019</password>
+        <pool minSize="2" maxSize="8" timeoutSec="60"/>
+    </connection>
+
+    <connection id="CN_STG_FILE" name="連携ファイル置き場 (CIFS)">
+        <type>fileshare</type>
+        <path>\\fileserver01\etl_stage</path>
+        <user>svc_etl</user>
+        <password>SvcEtl_2017!</password>
+    </connection>
+
+</connections>

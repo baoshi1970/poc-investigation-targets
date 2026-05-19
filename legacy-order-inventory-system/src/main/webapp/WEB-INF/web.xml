@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE web-app PUBLIC
+    "-//Sun Microsystems, Inc.//DTD Web Application 2.3//EN"
+    "http://java.sun.com/dtd/web-app_2_3.dtd">
+<!--
+  履歴:
+    2008-04-15 初版 (担当: 田中)
+    2011-08-02 在庫サブシステム追加 (担当: 佐藤)
+    2014-11-30 セッションタイムアウト変更 (担当: 田中)
+    2019-03-12 文字コード Filter 暫定追加 ※後で正式対応する予定だった
+-->
+<web-app>
+    <display-name>OMS - Order Management System</display-name>
+
+    <context-param>
+        <param-name>jdbc.url</param-name>
+        <param-value>jdbc:oracle:thin:@10.20.30.40:1521:OMSPRD</param-value>
+    </context-param>
+    <context-param>
+        <param-name>jdbc.user</param-name>
+        <param-value>oms_app</param-value>
+    </context-param>
+    <context-param>
+        <param-name>jdbc.password</param-name>
+        <param-value>oms_app_2014!</param-value>
+    </context-param>
+
+    <servlet>
+        <servlet-name>LoginServlet</servlet-name>
+        <servlet-class>com.legacy.oms.servlet.LoginServlet</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>OrderServlet</servlet-name>
+        <servlet-class>com.legacy.oms.servlet.OrderServlet</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>InventoryServlet</servlet-name>
+        <servlet-class>com.legacy.oms.servlet.InventoryServlet</servlet-class>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>LoginServlet</servlet-name>
+        <url-pattern>/login</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>OrderServlet</servlet-name>
+        <url-pattern>/order/*</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>InventoryServlet</servlet-name>
+        <url-pattern>/inventory/*</url-pattern>
+    </servlet-mapping>
+
+    <session-config>
+        <session-timeout>240</session-timeout>
+    </session-config>
+
+    <welcome-file-list>
+        <welcome-file>index.jsp</welcome-file>
+    </welcome-file-list>
+
+    <error-page>
+        <exception-type>java.lang.Exception</exception-type>
+        <location>/error.jsp</location>
+    </error-page>
+</web-app>

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  取引先マスタ同期 フロー
+  作成: 2017-06 / 最終編集: 2022-04 (鈴木)
+  TICKET-ASTR-018: 成功時も SMTP 件名が [FAILED] になる問題は未解決。
+-->
+<flow xmlns="http://www.asteria.com/warp/flow"
+      id="FLW-001"
+      name="customer_master_sync"
+      version="3.2">
+
+    <variables>
+        <variable name="runId" type="string" expr="formatDate(now(),'yyyyMMddHHmm')"/>
+        <variable name="recCount" type="int" value="0"/>
+    </variables>
+
+    <components>
+
+        <component id="C1" type="DBInput" name="OMS から取引先取得">
+            <connection ref="CN_OMS_PRD"/>
+            <query><![CDATA[
+                SELECT CUSTOMER_CD, CUSTOMER_NM, TEL, ADDR, DEL_FLG
+                  FROM M_CUSTOMER
+            ]]></query>
+            <output>
+                <field name="customerCd" type="string" length="10"/>
+                <field name="customerNm" type="string" length="120"/>
+                <field name="tel"        type="string" length="20"/>
+                <field name="addr"       type="string" length="200"/>
+                <field name="delFlg"     type="string" length="1"/>
+            </output>
+        </component>
+
+        <component id="C2" type="Mapper" name="DWH 形式に整形">
+            <input ref="C1"/>
+            <mapping>
+                <map src="customerCd" dst="CUST_CODE"/>
+                <map src="customerNm" dst="CUST_NAME"/>
+                <map src="tel"        dst="PHONE"/>
+                <map src="addr"       dst="ADDRESS"/>
+                <!-- delFlg='1' は論理削除だが DWH 側に列が無いので落とす -->
+                <filter expr="delFlg == '0'"/>
+            </mapping>
+            <!--
+              ※ 取引先名に半角カナや機種依存文字が含まれるとここを素通りして
+                 DWH 側で文字化けする (TICKET-ASTR-018 と別、未起票)
+            -->
+        </component>
+
+        <component id="C3" type="DBOutput" name="DWH 取引先テーブル全件洗い替え">
+            <connection ref="CN_DWH"/>
+            <table>DIM_CUSTOMER</table>
+            <mode>truncate_insert</mode>
+            <input ref="C2"/>
+            <!--
+              現在は DELETE → INSERT。約 8 万件で 8 分。
+              この間 DWH のダッシュボードから DIM_CUSTOMER が消える瞬間がある。
+              MERGE への置き換えは 2020 年に検討されたが未実施。
+            -->
+        </component>
+
+        <component id="C4" type="ScriptTask" name="件数集計">
+            <input ref="C3"/>
+            <script lang="javascript"><![CDATA[
+                // recCount をインクリメント (1 行ずつ呼ばれる)
+                vars.recCount = vars.recCount + 1;
+            ]]></script>
+        </component>
+
+        <component id="C5" type="MailSend" name="完了通知">
+            <to>${properties.notification.mail}</to>
+            <subject>[FAILED] customer_master_sync done runId=${vars.runId} count=${vars.recCount}</subject>
+            <body><![CDATA[
+                customer_master_sync が終了しました。
+                件数: ${vars.recCount}
+                runId: ${vars.runId}
+            ]]></body>
+            <!--
+              件名固定で [FAILED] 表記。動的に切り替えるロジックを書こうとして
+              途中放棄したまま (TICKET-ASTR-018)。
+            -->
+        </component>
+
+    </components>
+
+    <wire from="C1" to="C2"/>
+    <wire from="C2" to="C3"/>
+    <wire from="C3" to="C4"/>
+    <wire from="C4" to="C5"/>
+
+    <!-- 例外ハンドラ未定義。フロー失敗時は Warp 既定の挙動 (リトライ無し、メール無し) -->
+</flow>

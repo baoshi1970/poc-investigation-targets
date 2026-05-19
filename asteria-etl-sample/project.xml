@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ASTERIA Warp Project Definition
+  生成元: Warp Designer 1709 / 手動編集あり (2019, 2022)
+-->
+<project xmlns="http://www.asteria.com/warp/project"
+         version="1709"
+         name="oms-dwh-bridge">
+
+    <description>
+        基幹 (OMS) と DWH の間のデータ連携プロジェクト。
+        運用上クリティカル度: 中 (停止すると翌朝の経営ダッシュボードが空になる)。
+    </description>
+
+    <properties>
+        <property name="env" value="prod"/>
+        <property name="schedule.enabled" value="true"/>
+        <property name="notification.mail" value="it-ops@example.co.jp"/>
+        <property name="batch.user" value="batch_admin"/>
+    </properties>
+
+    <flows>
+        <flow id="FLW-001" file="flows/customer_master_sync.flwx" enabled="true">
+            <schedule cron="0 0 6 ? * MON-FRI"/>
+            <description>取引先マスタの基幹→DWH 連携 (差分なし全件)</description>
+        </flow>
+
+        <flow id="FLW-002" file="flows/order_etl_daily.flwx" enabled="true">
+            <schedule cron="0 30 2 * * ?"/>
+            <description>受注データ日次 ETL (差分なし全件)</description>
+        </flow>
+
+        <flow id="FLW-003" file="flows/inventory_reconcile.flwx" enabled="true">
+            <schedule cron="0 0 4 1 * ?"/>
+            <description>在庫マスタ突合 (月次)</description>
+        </flow>
+
+        <!-- 旧フロー。新フローへ移行済だが消し忘れ -->
+        <flow id="FLW-099" file="flows/legacy_csv_export.flwx" enabled="false">
+            <description>2018 年まで使っていた CSV エクスポート (要削除確認)</description>
+        </flow>
+    </flows>
+
+    <resources>
+        <resource file="resources/jdbc_connections.xml"/>
+    </resources>
+</project>

@@ -1,0 +1,26 @@
+# Build artifacts
+target/
+build/
+out/
+*.class
+*.war
+*.jar
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local environment
+.env
+.env.local

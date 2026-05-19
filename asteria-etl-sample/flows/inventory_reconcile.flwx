@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  在庫マスタ突合フロー (月次)
+  作成: 2018-02 / 倉庫追加の度に手動でループ枝をコピペ
+  TICKET-ASTR-024: 倉庫ループが直列。並列化したい。
+-->
+<flow xmlns="http://www.asteria.com/warp/flow"
+      id="FLW-003"
+      name="inventory_reconcile"
+      version="2.4">
+
+    <variables>
+        <variable name="runId" type="string" expr="formatDate(now(),'yyyyMMdd')"/>
+        <variable name="diffCount" type="int" value="0"/>
+    </variables>
+
+    <components>
+
+        <!-- 倉庫ごとに直列で同じ処理を繰り返す (手動コピペ運用) -->
+
+        <component id="W001_IN" type="DBInput" name="W001 在庫取得 (OMS)">
+            <connection ref="CN_OMS_PRD"/>
+            <query>SELECT ITEM_CD, STOCK_QTY FROM T_INVENTORY WHERE WAREHOUSE_CD='W001'</query>
+        </component>
+        <component id="W001_DWH" type="DBInput" name="W001 在庫取得 (DWH)">
+            <connection ref="CN_DWH"/>
+            <query>SELECT ITEM_CODE, STOCK_QTY FROM DIM_INVENTORY WHERE WAREHOUSE='W001'</query>
+        </component>
+        <component id="W001_DIFF" type="Merger" name="W001 差分抽出">
+            <left  ref="W001_IN"  key="ITEM_CD"/>
+            <right ref="W001_DWH" key="ITEM_CODE"/>
+            <output mode="diff-only"/>
+        </component>
+
+        <component id="W002_IN" type="DBInput" name="W002 在庫取得 (OMS)">
+            <connection ref="CN_OMS_PRD"/>
+            <query>SELECT ITEM_CD, STOCK_QTY FROM T_INVENTORY WHERE WAREHOUSE_CD='W002'</query>
+        </component>
+        <component id="W002_DWH" type="DBInput" name="W002 在庫取得 (DWH)">
+            <connection ref="CN_DWH"/>
+            <query>SELECT ITEM_CODE, STOCK_QTY FROM DIM_INVENTORY WHERE WAREHOUSE='W002'</query>
+        </component>
+        <component id="W002_DIFF" type="Merger" name="W002 差分抽出">
+            <left  ref="W002_IN"  key="ITEM_CD"/>
+            <right ref="W002_DWH" key="ITEM_CODE"/>
+            <output mode="diff-only"/>
+        </component>
+
+        <component id="W003_IN" type="DBInput" name="W003 在庫取得 (OMS)">
+            <connection ref="CN_OMS_PRD"/>
+            <query>SELECT ITEM_CD, STOCK_QTY FROM T_INVENTORY WHERE WAREHOUSE_CD='W003'</query>
+        </component>
+        <component id="W003_DWH" type="DBInput" name="W003 在庫取得 (DWH)">
+            <connection ref="CN_DWH"/>
+            <!--
+              ※ 2022 年に追加された W003 のみ DWH 側テーブル名が違う (歴史的経緯)
+                 だが、ここでは DIM_INVENTORY を見ているので常に 0 件返る → 差分が全件扱いになる
+            -->
+            <query>SELECT ITEM_CODE, STOCK_QTY FROM DIM_INVENTORY WHERE WAREHOUSE='W003'</query>
+        </component>
+        <component id="W003_DIFF" type="Merger" name="W003 差分抽出">
+            <left  ref="W003_IN"  key="ITEM_CD"/>
+            <right ref="W003_DWH" key="ITEM_CODE"/>
+            <output mode="diff-only"/>
+        </component>
+
+        <component id="MERGE_ALL" type="Union" name="全倉庫差分マージ">
+            <input ref="W001_DIFF"/>
+            <input ref="W002_DIFF"/>
+            <input ref="W003_DIFF"/>
+        </component>
+
+        <component id="OUT_FILE" type="FileOutput" name="差分レポート出力">
+            <connection ref="CN_STG_FILE"/>
+            <path>\\fileserver01\etl_stage\inv_recon\diff_${vars.runId}.csv</path>
+            <encoding>Shift_JIS</encoding>
+            <input ref="MERGE_ALL"/>
+        </component>
+
+        <component id="MAIL" type="MailSend" name="差分通知">
+            <to>${properties.notification.mail}</to>
+            <subject>在庫突合 差分件数=${vars.diffCount} runId=${vars.runId}</subject>
+            <attach>\\fileserver01\etl_stage\inv_recon\diff_${vars.runId}.csv</attach>
+            <body>在庫突合レポートを添付します。</body>
+        </component>
+
+    </components>
+
+    <wire from="W001_DIFF" to="MERGE_ALL"/>
+    <wire from="W002_DIFF" to="MERGE_ALL"/>
+    <wire from="W003_DIFF" to="MERGE_ALL"/>
+    <wire from="MERGE_ALL" to="OUT_FILE"/>
+    <wire from="OUT_FILE"  to="MAIL"/>
+
+</flow>
