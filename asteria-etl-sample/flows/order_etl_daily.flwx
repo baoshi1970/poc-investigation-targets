@@ -74,22 +74,39 @@
             <!-- ファイル一意化キーが runId(分単位) のため、再実行で上書きされる -->
         </component>
 
-        <component id="O5" type="DBExecute" name="DWH 受注テーブル切替">
+        <!-- TICKET-ASTR-025 fix: load into staging table first so FACT_ORDER is never touched
+             until the data is confirmed good. BULK INSERT failure leaves FACT_ORDER intact. -->
+        <component id="O5" type="DBExecute" name="ステージングへ BULK INSERT">
             <connection ref="CN_DWH"/>
             <input ref="O4"/>
             <statements>
-                <sql>TRUNCATE TABLE FACT_ORDER</sql>
+                <sql>TRUNCATE TABLE FACT_ORDER_STG</sql>
                 <sql><![CDATA[
-                    BULK INSERT FACT_ORDER
+                    BULK INSERT FACT_ORDER_STG
                     FROM '\\fileserver01\etl_stage\order\order_${vars.runId}.tsv'
                     WITH (FIELDTERMINATOR='\t', ROWTERMINATOR='\n', CODEPAGE='65001')
                 ]]></sql>
             </statements>
-            <!--
-              TRUNCATE → BULK INSERT。途中で BULK INSERT が失敗すると
-              FACT_ORDER が空のまま朝になる障害が 2022-08 と 2023-12 に発生。
-              ロールバック設計は無し。
-            -->
+        </component>
+
+        <!-- TICKET-ASTR-025 fix: swap staging → live inside an explicit transaction.
+             SQL Server TRUNCATE inside BEGIN TRANSACTION is rollback-capable. -->
+        <component id="O5b" type="DBExecute" name="DWH 本テーブル切替（トランザクション）">
+            <connection ref="CN_DWH"/>
+            <statements>
+                <sql>BEGIN TRANSACTION</sql>
+                <sql>TRUNCATE TABLE FACT_ORDER</sql>
+                <sql>INSERT INTO FACT_ORDER SELECT * FROM FACT_ORDER_STG</sql>
+                <sql>COMMIT TRANSACTION</sql>
+            </statements>
+        </component>
+
+        <!-- Triggered on error from O5b to undo any partial transaction before notifying. -->
+        <component id="O5b_rollback" type="DBExecute" name="ロールバック">
+            <connection ref="CN_DWH"/>
+            <statements>
+                <sql>IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION</sql>
+            </statements>
         </component>
 
         <component id="O6" type="MailSend" name="完了通知">
@@ -98,12 +115,22 @@
             <body>order_etl_daily が完了しました。</body>
         </component>
 
+        <component id="O_err" type="MailSend" name="障害通知">
+            <to>${properties.notification.mail}</to>
+            <subject>[FAILED] order_etl_daily runId=${vars.runId}</subject>
+            <body>order_etl_daily でエラーが発生しました。FACT_ORDER は切替前の状態を保持しています。ログを確認してください。</body>
+        </component>
+
     </components>
 
     <wire from="O1" to="O2"/>
     <wire from="O2" to="O3"/>
     <wire from="O3" to="O4"/>
     <wire from="O4" to="O5"/>
-    <wire from="O5" to="O6"/>
+    <wire from="O5" to="O5b"/>
+    <wire from="O5" to="O_err" type="error"/>
+    <wire from="O5b" to="O6"/>
+    <wire from="O5b" to="O5b_rollback" type="error"/>
+    <wire from="O5b_rollback" to="O_err"/>
 
 </flow>
