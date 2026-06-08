@@ -80,37 +80,63 @@ public class InventoryDAO {
 
     /**
      * 受注確定時の在庫引き当て.
-     * 2013 年に「在庫が二重に減る」報告があったが原因不明のままクローズ (ISSUE-178).
+     * ISSUE-178 修正: SELECT FOR UPDATE で行ロックを取得し、在庫チェック・減算・ログ挿入を
+     * 同一トランザクション内でアトミックに実行することで競合状態を解消.
      */
     public void decreaseStock(String orderNo, String itemCd, String warehouseCd, int qty)
             throws SQLException {
-        Connection con = DBUtil.getConnection();
+        // 専用コネクションでトランザクションを開始（共有コネクションは使わない）
+        Connection con = DBUtil.getTransactionalConnection();
+        try {
+            // FOR UPDATE で行ロック取得。並行トランザクションはここでブロックされる。
+            PreparedStatement sel = con.prepareStatement(
+                "SELECT STOCK_QTY FROM T_INVENTORY "
+              + "WHERE ITEM_CD = ? AND WAREHOUSE_CD = ? FOR UPDATE");
+            sel.setString(1, itemCd);
+            sel.setString(2, warehouseCd);
+            ResultSet rs = sel.executeQuery();
 
-        int current = getStock(itemCd, warehouseCd);
-        if (current < qty) {
-            throw new SQLException("在庫不足: item=" + itemCd + " req=" + qty + " stock=" + current);
+            if (!rs.next()) {
+                throw new SQLException("在庫レコードなし: item=" + itemCd);
+            }
+            int current = rs.getInt(1);
+            rs.close();
+            sel.close();
+
+            if (current < qty) {
+                throw new SQLException(
+                    "在庫不足: item=" + itemCd + " req=" + qty + " stock=" + current);
+            }
+
+            PreparedStatement up = con.prepareStatement(
+                "UPDATE T_INVENTORY "
+              + "SET STOCK_QTY = STOCK_QTY - ?, UPD_DT = SYSDATE "
+              + "WHERE ITEM_CD = ? AND WAREHOUSE_CD = ?");
+            up.setInt(1, qty);
+            up.setString(2, itemCd);
+            up.setString(3, warehouseCd);
+            up.executeUpdate();
+            up.close();
+
+            // 在庫減算と移動ログ挿入を同一トランザクションでコミット
+            PreparedStatement log = con.prepareStatement(
+                "INSERT INTO InventoryTrx "
+              + "(trx_id, item_code, warehouse, delta_qty, trx_type, ref_order_no, created_at) "
+              + "VALUES (SEQ_INV_TRX.NEXTVAL, ?, ?, ?, 'OUT', ?, SYSTIMESTAMP)");
+            log.setString(1, itemCd);
+            log.setString(2, warehouseCd);
+            log.setInt(3, qty);
+            log.setString(4, orderNo);
+            log.executeUpdate();
+            log.close();
+
+            con.commit();
+        } catch (SQLException e) {
+            con.rollback();
+            throw e;
+        } finally {
+            con.close();
         }
-        int after = current - qty;
-
-        PreparedStatement up = con.prepareStatement(
-            "UPDATE T_INVENTORY SET STOCK_QTY = ?, UPD_DT = SYSDATE "
-          + "WHERE ITEM_CD = ? AND WAREHOUSE_CD = ?");
-        up.setInt(1, after);
-        up.setString(2, itemCd);
-        up.setString(3, warehouseCd);
-        up.executeUpdate();
-        up.close();
-
-        // 移動ログを別 SQL で挿入
-        PreparedStatement log = con.prepareStatement(
-            "INSERT INTO InventoryTrx (trx_id, item_code, warehouse, delta_qty, trx_type, ref_order_no, created_at) "
-          + "VALUES (SEQ_INV_TRX.NEXTVAL, ?, ?, ?, 'OUT', ?, SYSTIMESTAMP)");
-        log.setString(1, itemCd);
-        log.setString(2, warehouseCd);
-        log.setInt(3, qty);
-        log.setString(4, orderNo);
-        log.executeUpdate();
-        log.close();
     }
 
     // ----- 以下、過去に作ったが現在未使用と思われるメソッド群 -----

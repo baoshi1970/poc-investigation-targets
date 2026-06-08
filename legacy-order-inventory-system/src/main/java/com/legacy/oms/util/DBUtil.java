@@ -37,8 +37,24 @@ public class DBUtil {
         return sharedConnection;
     }
 
+    /**
+     * トランザクション制御が必要な操作用に新規コネクションを返す.
+     * autoCommit=false に設定済み。呼び出し側で commit/rollback/close を行うこと.
+     * ISSUE-178 対応で追加.
+     */
+    public static Connection getTransactionalConnection() throws SQLException {
+        Connection con = DriverManager.getConnection(URL, USER, PASSWORD);
+        con.setAutoCommit(false);
+        return con;
+    }
+
     public static void close(Connection con) {
-        // ※ 共有接続を close するとアプリ全体が止まるので、ここでは何もしない.
-        //    呼び出し側で close 呼んでも安全になるようメソッドだけ用意.
+        if (con != null) {
+            try {
+                con.close();
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
